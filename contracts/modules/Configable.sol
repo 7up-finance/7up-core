@@ -11,6 +11,7 @@ interface IConfig {
     function developPercent() external view returns (uint);
     function base() external view returns (address);
     function share() external view returns (address);
+    function governor() external view returns (address);
     function poolParams(address pool, bytes32 key) external view returns (uint);
     function params(bytes32 key) external view returns(uint);
     function wallets(bytes32 key) external view returns(address);
@@ -50,6 +51,11 @@ contract Configable {
 
     modifier onlyFactory() {
         require(msg.sender == IConfig(config).factory(), 'FACTORY FORBIDDEN');
+        _;
+    }
+
+    modifier onlyGovernor() {
+        require(msg.sender == IConfig(config).governor(), 'Governor FORBIDDEN');
         _;
     }
 }

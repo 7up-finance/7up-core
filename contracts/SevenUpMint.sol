@@ -31,19 +31,27 @@ contract SevenUpMint is Configable {
         uint amount;     // How many tokens the user has provided.
         uint rewardDebt; // Reward debt. 
         uint rewardEarn; // Reward earn and not minted
+        uint index;
     }
     
     mapping(address => UserInfo) public lenders;
     mapping(address => UserInfo) public borrowers;
-    
+
+    address[] public lenderList;
+    address[] public borrowerList;
+
+    uint public numberOfLender;
+    uint public numberOfBorrower;
+
     event BorrowPowerChange (uint oldValue, uint newValue);
     event InterestRatePerBlockChanged (uint oldValue, uint newValue);
     event BorrowerProductivityIncreased (address indexed user, uint value);
     event BorrowerProductivityDecreased (address indexed user, uint value);
     event LenderProductivityIncreased (address indexed user, uint value);
     event LenderProductivityDecreased (address indexed user, uint value);
+    event Mint(address indexed user, uint userAmount, uint teamAmount, uint spareAmount);
     
-    function changeBorrowPower(uint _value) external onlyDeveloper {
+    function changeBorrowPower(uint _value) external onlyGovernor {
         uint old = borrowPower;
         require(_value != old, 'POWER_NO_CHANGE');
         require(_value <= 10000, 'INVALID_POWER_VALUE');
@@ -58,7 +66,7 @@ contract SevenUpMint is Configable {
     // This function adjust how many token will be produced by each block, eg:
     // changeAmountPerBlock(100)
     // will set the produce rate to 100/block.
-    function changeInterestRatePerBlock(uint value) external onlyDeveloper returns (bool) {
+    function changeInterestRatePerBlock(uint value) external onlyGovernor returns (bool) {
         uint old = amountPerBlock;
         require(value != old, 'AMOUNT_PER_BLOCK_NO_CHANGE');
 
@@ -75,12 +83,12 @@ contract SevenUpMint is Configable {
             return;
         }
 
-        if (totalLendProductivity.add(totalBorrowProducitivity) == 0) {
+        uint256 reward = _currentReward();
+        if (totalLendProductivity.add(totalBorrowProducitivity) == 0 || reward == 0) {
             lastRewardBlock = block.number;
             return;
         }
         
-        uint256 reward = _currentReward();
         uint borrowReward = reward.mul(borrowPower).div(10000);
         uint lendReward = reward.sub(borrowReward);
 
@@ -137,6 +145,13 @@ contract SevenUpMint is Configable {
         _update();
         _auditBorrower(user);
 
+        if(borrowers[user].index == 0)
+        {
+            borrowerList.push(user);
+            numberOfBorrower++;
+            borrowers[user].index = numberOfBorrower;
+        }
+
         totalBorrowProducitivity = totalBorrowProducitivity.add(value);
 
         userInfo.amount = userInfo.amount.add(value);
@@ -167,6 +182,13 @@ contract SevenUpMint is Configable {
         UserInfo storage userInfo = lenders[user];
         _update();
         _auditLender(user);
+
+        if(lenders[user].index == 0)
+        {
+            lenderList.push(user);
+            numberOfLender++;
+            lenders[user].index = numberOfLender;
+        }
 
         totalLendProductivity = totalLendProductivity.add(value);
 
@@ -232,6 +254,13 @@ contract SevenUpMint is Configable {
         return (earn, block.number);
     }
 
+    function takeAll() public view returns (uint) {
+        return takeBorrowWithAddress(msg.sender).add(takeLendWithAddress(msg.sender));
+    }
+
+    function takeAllWithBlock() external view returns (uint, uint) {
+        return (takeAll(), block.number);
+    }
 
     // External function call
     // When user calls this function, it will calculate how many token will mint to user from his productivity * time
@@ -253,6 +282,22 @@ contract SevenUpMint is Configable {
         uint amount = lenders[msg.sender].rewardEarn;
         _mintDistribution(msg.sender, amount);
         lenders[msg.sender].rewardEarn = 0;
+        return amount;
+    }
+
+    function mintAll() external returns (uint) {
+        _update();
+
+        _auditBorrower(msg.sender);
+        _auditLender(msg.sender);
+        uint borrowAmount = borrowers[msg.sender].rewardEarn;
+        uint lendAmount = lenders[msg.sender].rewardEarn;
+        uint amount = lendAmount.add(borrowAmount);
+        require(amount > 0, "NOTHING TO MINT");
+        _mintDistribution(msg.sender, amount);
+        borrowers[msg.sender].rewardEarn = 0;
+        lenders[msg.sender].rewardEarn = 0;
+
         return amount;
     }
 
@@ -283,6 +328,9 @@ contract SevenUpMint is Configable {
             TransferHelper.safeTransfer(IConfig(config).token(), IConfig(config).wallets(SpareWalletKey), spareAmount);
         }
         
-        TransferHelper.safeTransfer(IConfig(config).token(), user, userAmount);
+        if(userAmount > 0) {
+           TransferHelper.safeTransfer(IConfig(config).token(), user, userAmount); 
+        }
+        emit Mint(user, userAmount, teamAmount, spareAmount);
     }
 }
